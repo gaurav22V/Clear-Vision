@@ -38,6 +38,7 @@ clear-vision-gan/
         |- corruption.py    # Adding blur, noise, and masks to raw data
     |- scraper/
         |- scraper.py       # web scraper to build the raw image dataset
+```
 
 ## Quick Start
 ```bash
