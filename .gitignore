@@ -1,0 +1,33 @@
+# model weights(>100mb)
+*.pth
+*.pt
+*.ckpt
+*.weights
+
+# datasets
+data/
+*.jpg
+*.jpeg
+*.png
+runs/
+
+# Python , pycache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual Environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+.streamlit/secrets.toml
+
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp

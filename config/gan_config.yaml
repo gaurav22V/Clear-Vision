@@ -1,21 +1,25 @@
-
-
-# models/config/gan_config.yaml
-
-train_pairs_path: data/splits/train_pairs.txt
-val_pairs_path: data/splits/val_pairs.txt
-raw_image_root: data/raw
-corrupted_image_root: data/corrupted
-checkpoint_dir: checkpoints
-results_dir: results
-
-# Model parameters
-image_size:  [128,128]  
-
-# Training parameters
-batch_size: 4           
 epochs: 100
+batch_size: 4
+image_size: 256
+results_dir: "results"
+checkpoint_dir: "checkpoints"
+
 learning_rate_g: 0.0001
-learning_rate_d: 0.0004 
-beta1: 0.5              
+learning_rate_d: 0.0004
+beta1: 0.5
 lambda_L1: 100
+
+train_pairs_path: "data/processed/train_pairs.txt"
+val_pairs_path: "data/processed/val_pairs.txt"
+raw_image_root: "data/raw"
+corrupted_image_root: "data/corrupted"
+
+corruption_types: ["noise", "jpeg", "blur", "mask", "combined"]
+max_total_images: 250
+num_images_per_term: 50
+search_terms: 
+  - "street portraits"
+  - "unsplash faces"
+  - "nature landscapes"
+  - "city architecture"
+  - "wildlife animals"

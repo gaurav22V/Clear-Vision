@@ -1,93 +1,112 @@
 
 """
-Data Preprocessing Pipeline 
+Pix2Pix GAN Architecture: U-Net Generator & PatchGAN Discriminator
 """
 
-import os
 import torch
-from torch.utils.data import Dataset
-from PIL import Image
-from pathlib import Path
+import torch.nn as nn
 
-class ImagePairDataset(Dataset):
-    """
-    A clean, lightweight PyTorch dataset that loads pairs of ground-truth
-    and synthetically degraded images. Handles path cross-compatibility natively.
-    """
-    def __init__(self, manifest_file, raw_root, corrupted_root, transform=None):
-        """
-        Args:
-            manifest_file (str): Path to the txt file containing the comma-separated image pairings.
-            raw_root (str): Root directory path for clean target images.
-            corrupted_root (str): Root directory path for degraded input images.
-            transform (callable, optional): PyTorch transform pipeline applied to both image sets.
-        """
-        self.raw_root = Path(raw_root)
-        self.corrupted_root = Path(corrupted_root)
-        self.transform = transform
-        self.pairs = []
+class UNetDown(nn.Module):
+    def __init__(self, in_channels, out_channels, normalize=True, dropout=0.0):
+        super().__init__()
+        layers = [nn.Conv2d(in_channels, out_channels, kernel_size=4, stride=2, padding=1, bias=False)]
+        if normalize:
+            layers.append(nn.InstanceNorm2d(out_channels))
+        layers.append(nn.LeakyReLU(0.2))
+        if dropout > 0.0:
+            layers.append(nn.Dropout(dropout))
+        self.model = nn.Sequential(*layers)
 
-        if not os.path.exists(manifest_file):
-            raise FileNotFoundError(f"Manifest mapping file missing: {manifest_file}")
+    def forward(self, x):
+        return self.model(x)
 
-        # Read manifest files 
-        with open(manifest_file, "r") as f:
-            for line in f:
-                line = line.strip()
-                if not line or ',' not in line:
-                    continue
-                
-                # Split paths and strip Windows backslash
-                raw_rel, corrupted_rel = line.split(',')
-                raw_name = os.path.basename(raw_rel.strip().replace("\\", "/"))
-                corrupted_name = os.path.basename(corrupted_rel.strip().replace("\\", "/"))
-                
-                self.pairs.append((raw_name, corrupted_name))
+class UNetUp(nn.Module):
+    def __init__(self, in_channels, out_channels, dropout=0.0):
+        super().__init__()
+        layers = [
+            nn.Sequential(
+                nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True),
+                nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
+            ),
+            nn.InstanceNorm2d(out_channels),
+            nn.ReLU(inplace=True)
+        ]
+        if dropout > 0.0:
+            layers.append(nn.Dropout(dropout))
+        self.model = nn.Sequential(*layers)
 
-    def __len__(self):
-        return len(self.pairs)
+    def forward(self, x, skip_input):
+        x = self.model(x)
+        x = torch.cat((x, skip_input), 1)
+        return x
 
-    def __getitem__(self, idx):
-        raw_name, corrupted_name = self.pairs[idx]
-        
-        raw_path = self.raw_root / raw_name
-        corrupted_path = self.corrupted_root / corrupted_name
-
-        try:
-            raw_img = Image.open(raw_path).convert("RGB")
-            corrupted_img = Image.open(corrupted_path).convert("RGB")
-        except Exception as e:
-            print(f"⚠️ Index [{idx}] Data Loading Error: Could not resolve paths.\n -> Raw: {raw_path}\n -> Corrupted: {corrupted_path}")
-            raise e
-
-        if self.transform:
-            corrupted_tensor = self.transform(corrupted_img)
-            raw_tensor = self.transform(raw_img)
-            return corrupted_tensor, raw_tensor
-
-        return corrupted_img, raw_img
-
-
-if __name__ == "__main__":
-    from torchvision import transforms
-    from torch.utils.data import DataLoader
-
-    print("Verifying mock dataset loader pipeline configurations...")
-    
-    mock_transform = transforms.Compose([
-        transforms.Resize((256, 256)),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
-    ])
-
-    # Testing
-    try:
-        dataset = ImagePairDataset(
-            manifest_file="data/splits/train_pairs.txt",
-            raw_root="data/raw",
-            corrupted_root="data/corrupted",
-            transform=mock_transform
+class UNetGenerator(nn.Module):
+    def __init__(self, in_channels=3, out_channels=3):
+        super().__init__()
+        self.down1 = UNetDown(in_channels, 64, normalize=False)
+        self.down2 = UNetDown(64, 128)
+        self.down3 = UNetDown(128, 256)
+        self.down4 = UNetDown(256, 512, dropout=0.5)
+        self.down5 = UNetDown(512, 512, dropout=0.5)
+        self.down6 = UNetDown(512, 512, dropout=0.5)
+        self.down7 = UNetDown(512, 512, dropout=0.5)
+        self.down8 = nn.Sequential(
+            nn.Conv2d(512, 512, kernel_size=4, stride=2, padding=1, bias=False),
+            nn.ReLU(inplace=True)
         )
-        print(f"✓ Dataset parsed successfully! Detected sample pairs: {len(dataset)}")
-    except FileNotFoundError:
-        print("ℹ Manifest missing. Skipping runtime iteration validation (Expected default test behavior outside execution roots).")
+        
+        self.up1 = UNetUp(512, 512, dropout=0.5)
+        self.up2 = UNetUp(1024, 512, dropout=0.5)
+        self.up3 = UNetUp(1024, 512, dropout=0.5)
+        self.up4 = UNetUp(1024, 512)
+        self.up5 = UNetUp(1024, 256)
+        self.up6 = UNetUp(512, 128)
+        self.up7 = UNetUp(256, 64)
+        
+        self.final = nn.Sequential(
+            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True),
+            nn.Conv2d(128, out_channels, kernel_size=3, stride=1, padding=1),
+            nn.Tanh()
+        )
+
+    def forward(self, x):
+        d1 = self.down1(x)
+        d2 = self.down2(d1)
+        d3 = self.down3(d2)
+        d4 = self.down4(d3)
+        d5 = self.down5(d4)
+        d6 = self.down6(d5)
+        d7 = self.down7(d6)
+        d8 = self.down8(d7)
+        
+        u1 = self.up1(d8, d7)
+        u2 = self.up2(u1, d6)
+        u3 = self.up3(u2, d5)
+        u4 = self.up4(u3, d4)
+        u5 = self.up5(u4, d3)
+        u6 = self.up6(u5, d2)
+        u7 = self.up7(u6, d1)
+        
+        return self.final(u7)
+
+class PatchDiscriminator(nn.Module):
+    def __init__(self, in_channels=3):
+        super().__init__()
+        def discriminator_block(in_filters, out_filters, normalization=True):
+            layers = [nn.Conv2d(in_filters, out_filters, kernel_size=4, stride=2, padding=1)]
+            if normalization:
+                layers.append(nn.InstanceNorm2d(out_filters))
+            layers.append(nn.LeakyReLU(0.2, inplace=True))
+            return layers
+            
+        self.model = nn.Sequential(
+            *discriminator_block(in_channels * 2, 64, normalization=False),
+            *discriminator_block(64, 128),
+            *discriminator_block(128, 256),
+            *discriminator_block(256, 512),
+            nn.Conv2d(512, 1, kernel_size=4, padding=1, bias=False)
+        )
+
+    def forward(self, img_A, img_B):
+        img_input = torch.cat((img_A, img_B), 1)
+        return self.model(img_input)
